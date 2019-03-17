@@ -15,7 +15,7 @@ In addition to starting the server it will also generate keys located in ~/.hans
 
 ###Client
 This will connect the client to the server, it uses exponential backoff to prevent a thundering herd.
-The initial connect to the server will fail until you copy the key from ~/.hansel/pending_keys to ~/.hansel/authorized_keys
+The initial connect to the server will fail until you copy the key from `~/.hansel/pending_keys` to `~/.hansel/authorized_keys`
 
 Once you do that you should see a lot of scrolling data as actual command runners have not been implemented yet.
 
