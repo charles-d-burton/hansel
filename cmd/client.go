@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
 )
@@ -88,21 +89,32 @@ func connect(privateKey string) error {
 		},
 		Timeout: time.Second * 30,
 	}
-	client, err := ssh.Dial("tcp", clientHost+":"+clientPort, sshConfig)
-	channel, _, err := client.Conn.OpenChannel("session", make([]byte, 1024))
-	if err != nil {
-		return err
-	}
 
-	log.Println("Reading channel")
-	gob.Register(datums.Message{})
-	var message datums.Message
-	dec := gob.NewDecoder(channel)
-	for {
-		err := dec.Decode(&message)
+	operation := func() error {
+		log.Println("Attempting to connect")
+		client, err := ssh.Dial("tcp", clientHost+":"+clientPort, sshConfig)
 		if err != nil {
 			log.Println(err)
+			return err
 		}
-		log.Println(&message)
+		channel, _, err := client.Conn.OpenChannel("session", make([]byte, 1024))
+		if err != nil {
+			return err
+		}
+
+		log.Println("Reading channel")
+		gob.Register(datums.Message{})
+		var message datums.Message
+		dec := gob.NewDecoder(channel)
+		for {
+			err := dec.Decode(&message)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Println(&message)
+		}
 	}
+	bof := backoff.NewExponentialBackOff()
+	err = backoff.Retry(operation, bof)
+	return err
 }

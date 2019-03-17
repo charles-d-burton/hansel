@@ -195,7 +195,6 @@ func validateConfigFileExists(filePath string) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-
 		return nil
 	} else {
 		log.Fatal("Something went wrong while creating authorization file")
