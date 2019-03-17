@@ -26,15 +26,33 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
 )
 
-var (
-	Port string
+const (
+	authorizedFile = "/.hansel/authorized_users"
+	pendingFile    = "/.hansel/pending_users"
 )
+
+var (
+	Port     string
+	CFLocker *ConfigFileLocker
+)
+
+type ConfigFileLocker struct {
+	AuthorizedUsers struct {
+		sync.RWMutex
+		ConfigFile string
+	}
+	PendingUsers struct {
+		sync.RWMutex
+		ConfigFile string
+	}
+}
 
 // serveCmd represents the serve command
 var serveCmd = &cobra.Command{
@@ -48,6 +66,14 @@ var serveCmd = &cobra.Command{
 }
 
 func init() {
+	cfgFiles, err := setupConfigFiles(authorizedFile, pendingFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if cfgFiles == nil {
+		log.Fatal(errors.New("Unable to initialize config files"))
+	}
+	CFLocker = cfgFiles
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().StringVarP(&Port, "port", "p", "62621", "Set the port to listen for connections")
 	// Here you will define your flags and configuration settings.
@@ -137,10 +163,6 @@ func handleChannel(newChannel ssh.NewChannel) {
 }
 
 func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-	log.Println("Got public key")
-	log.Println(ssh.FingerprintSHA256(key))
-	log.Println("User: ")
-	log.Println(connMeta.User())
 	valid, err := isUserValid(connMeta.User(), ssh.FingerprintSHA256(key))
 	if err != nil {
 		log.Fatal(err)
@@ -148,33 +170,78 @@ func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissi
 	if valid {
 		return nil, nil
 	}
+	err = markUserPending(connMeta.User(), ssh.FingerprintSHA256(key))
+	if err != nil {
+		log.Fatal(err)
+	}
 	return nil, errors.New("User is not valid")
 }
 
-func isUserValid(user, sha string) (bool, error) {
-	// Find home directory.
+func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
+	var cfFlocker ConfigFileLocker
 	home, err := homedir.Dir()
 	if err != nil {
 		log.Println(err)
-		return false, err
+		return nil, err
 	}
-	cfgFile := home + "/.hansel/authorized_users"
-	err = validateConfigFileExists(cfgFile)
-	if err != nil {
-		log.Fatal(err)
+	for _, configFile := range configs {
+		cfgFile := home + configFile
+		err = validateConfigFileExists(cfgFile)
+		if err != nil {
+			return nil, err
+		}
+		if configFile == authorizedFile {
+			cfFlocker.AuthorizedUsers.ConfigFile = cfgFile
+		}
+		if configFile == pendingFile {
+			cfFlocker.PendingUsers.ConfigFile = cfgFile
+		}
 	}
-	file, err := os.Open(cfgFile)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return &cfFlocker, nil
+}
+
+func isUserValid(user, sha string) (bool, error) {
+	CFLocker.AuthorizedUsers.Lock()
+	defer CFLocker.AuthorizedUsers.Unlock()
+	file, err := os.OpenFile(CFLocker.AuthorizedUsers.ConfigFile, os.O_APPEND|os.O_RDWR, 0600)
 	defer file.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Checking for validity: ")
+	return lookForUser(file, user, sha)
+}
+
+func markUserPending(user, sha string) error {
+	CFLocker.PendingUsers.Lock()
+	defer CFLocker.PendingUsers.Unlock()
+	file, err := os.OpenFile(CFLocker.PendingUsers.ConfigFile, os.O_APPEND|os.O_RDWR, 0600)
+	defer file.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	userPending, err := lookForUser(file, user, sha)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !userPending {
+		log.Println("User not found, marking pending")
+		if _, err := file.WriteString(user + "=" + sha + "\n"); err != nil {
+			log.Fatal(err)
+		}
+	}
+	return nil
+}
+
+func lookForUser(file *os.File, user, sha string) (bool, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		user := scanner.Text()
+		line := scanner.Text()
 		fmt.Println(user)
-		userAndKey := strings.Split(user, "=")
-		if strings.TrimSpace(userAndKey[0]) == strings.TrimSpace(user) {
-			if strings.TrimSpace(userAndKey[1]) == strings.TrimSpace(sha) {
+		userAndKey := strings.Split(line, "=")
+		if strings.Compare(strings.TrimSpace(userAndKey[0]), strings.TrimSpace(user)) == 0 {
+			log.Println("User matches, checking sha")
+			if strings.Compare(strings.TrimSpace(userAndKey[1]), strings.TrimSpace(sha)) == 0 {
 				return true, nil
 			}
 		}
@@ -187,9 +254,12 @@ func isUserValid(user, sha string) (bool, error) {
 }
 
 func validateConfigFileExists(filePath string) error {
-	if _, err := os.Stat(cfgFile); err == nil {
+
+	if _, err := os.Stat(filePath); err == nil {
+		log.Println("Config file exists: ", filePath)
 		return nil
 	} else if os.IsNotExist(err) {
+		log.Println("No config file found, createing: ", filePath)
 		emptyFile, err := os.Create(filePath)
 		defer emptyFile.Close()
 		if err != nil {
