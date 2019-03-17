@@ -15,16 +15,21 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"hansel/datums"
 	"hansel/keys"
 	"log"
 	"net"
+	"os"
+	"strings"
 
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
+	ssh "golang.org/x/crypto/ssh"
 )
 
 var (
@@ -61,7 +66,10 @@ func listenAndServe(privateKeyFile string) {
 	if err != nil {
 		log.Println(err)
 	}
-	config := &ssh.ServerConfig{NoClientAuth: true}
+	config := &ssh.ServerConfig{
+		NoClientAuth:      false,
+		PublicKeyCallback: validatePubKey,
+	}
 	config.AddHostKey(*signer)
 	listener, err := net.Listen("tcp", ":"+Port)
 	if err != nil {
@@ -126,4 +134,71 @@ func handleChannel(newChannel ssh.NewChannel) {
 		//b := buff[:n]
 		//log.Printf("[%s] %s", chanType, string(b))
 	}
+}
+
+func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	log.Println("Got public key")
+	log.Println(ssh.FingerprintSHA256(key))
+	log.Println("User: ")
+	log.Println(connMeta.User())
+	valid, err := isUserValid(connMeta.User(), ssh.FingerprintSHA256(key))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if valid {
+		return nil, nil
+	}
+	return nil, errors.New("User is not valid")
+}
+
+func isUserValid(user, sha string) (bool, error) {
+	// Find home directory.
+	home, err := homedir.Dir()
+	if err != nil {
+		log.Println(err)
+		return false, err
+	}
+	cfgFile := home + "/.hansel/authorized_users"
+	err = validateConfigFileExists(cfgFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	file, err := os.Open(cfgFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		user := scanner.Text()
+		fmt.Println(user)
+		userAndKey := strings.Split(user, "=")
+		if strings.TrimSpace(userAndKey[0]) == strings.TrimSpace(user) {
+			if strings.TrimSpace(userAndKey[1]) == strings.TrimSpace(sha) {
+				return true, nil
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+	return false, nil
+}
+
+func validateConfigFileExists(filePath string) error {
+	if _, err := os.Stat(cfgFile); err == nil {
+		return nil
+	} else if os.IsNotExist(err) {
+		emptyFile, err := os.Create(filePath)
+		defer emptyFile.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		return nil
+	} else {
+		log.Fatal("Something went wrong while creating authorization file")
+	}
+	return nil
 }
