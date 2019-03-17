@@ -22,3 +22,9 @@ Once you do that you should see a lot of scrolling data as actual command runner
 ```bash
 > hansel client -h localhost -p 4545
 ```
+
+#### TODO:
+Get remote execution running
+Figure out some sort of templating engine(HCL&HIL?)
+Implement a server connector to dynamically accept/regect keys and exert control
+Implement key revocation
