@@ -25,22 +25,26 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
+	yaml "gopkg.in/yaml.v2"
 )
 
 const (
 	authorizedFile = "/.hansel/authorized_users"
 	pendingFile    = "/.hansel/pending_users"
+	configDir      = "/.hansel/states/"
 )
 
 var (
 	Port     string
 	CFLocker *ConfigFileLocker
+	maxFile  = (1024 * 1024)
 )
 
 type ConfigFileLocker struct {
@@ -127,6 +131,7 @@ func handleChannels(chans <-chan ssh.NewChannel) {
 
 func handleChannel(newChannel ssh.NewChannel) {
 	channel, requests, err := newChannel.Accept()
+	defer channel.Close()
 	if err != nil {
 		log.Printf("could not accept channel (%s)", err)
 		return
@@ -135,31 +140,33 @@ func handleChannel(newChannel ssh.NewChannel) {
 	extraData := newChannel.ExtraData()
 
 	log.Printf("open channel [%s] '%s'", chanType, extraData)
-
+	go readFromRemote(channel)
 	//requests must be serviced
 	go ssh.DiscardRequests(requests)
 	gob.Register(datums.Message{})
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	i := 0
-	for {
-		var message datums.Message
-		message.Sequence = i
-		message.ID = "id"
-		message.Type = "command"
-		message.Message = "Hello client"
-		err := enc.Encode(&message)
-		_, err = channel.Write(buf.Bytes())
-
-		//n, err := channel.Read(buff)
-		if err != nil {
-			break
-		}
-		buf.Reset()
-		i = i + 1
-		//b := buff[:n]
-		//log.Printf("[%s] %s", chanType, string(b))
+	home, err := homedir.Dir()
+	if err != nil {
+		log.Println(err)
+		return
 	}
+	configs, err := marshalConfigs(home + configDir)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	for _, config := range configs {
+		log.Println("Got configs to send")
+		log.Println(config)
+		err := enc.Encode(&config)
+		if err != nil {
+			log.Println(err)
+		}
+		channel.Write(buf.Bytes())
+		buf.Reset()
+	}
+	select {}
 }
 
 func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -198,6 +205,22 @@ func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 		}
 	}
 	return &cfFlocker, nil
+}
+
+func readFromRemote(channel ssh.Channel) {
+	var clientStatus datums.ClientStatus
+	log.Println("Reading channel")
+	gob.Register(datums.ClientStatus{})
+	dec := gob.NewDecoder(channel)
+	for {
+		err := dec.Decode(&clientStatus)
+		if err != nil {
+			log.Println("Failed reading from channel", err)
+			//return
+		}
+		log.Println("Received status from: ", clientStatus.Name)
+		log.Println(clientStatus.Message)
+	}
 }
 
 func isUserValid(user, sha string) (bool, error) {
@@ -270,4 +293,45 @@ func validateConfigFileExists(filePath string) error {
 		log.Fatal("Something went wrong while creating authorization file")
 	}
 	return nil
+}
+
+func marshalConfigs(configDir string) ([]*datums.Message, error) {
+	d, err := os.Open(configDir)
+	if err != nil {
+		return nil, err
+	}
+	files, err := d.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+	var messages []*datums.Message
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.Mode().IsRegular() && file.Size() <= int64(maxFile) {
+
+			if filepath.Ext(file.Name()) == ".yml" {
+				buffer := make([]byte, file.Size())
+				f, err := os.Open(filepath.Join(configDir + file.Name()))
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				_, err = f.Read(buffer)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				var message datums.Message
+				err = yaml.Unmarshal(buffer, &message)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				messages = append(messages, &message)
+			}
+		}
+	}
+	return messages, nil
 }

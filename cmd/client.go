@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/gob"
 	"fmt"
 	"hansel/datums"
@@ -22,6 +23,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -101,7 +104,7 @@ func connect(privateKey string) error {
 		if err != nil {
 			return err
 		}
-
+		//go sendStatus(channel)
 		log.Println("Reading channel")
 		gob.Register(datums.Message{})
 		var message datums.Message
@@ -109,12 +112,60 @@ func connect(privateKey string) error {
 		for {
 			err := dec.Decode(&message)
 			if err != nil {
-				log.Println(err)
+				return err
 			}
 			log.Println(&message)
+			for _, action := range message.Actions {
+				log.Println("Running:")
+				log.Println(action)
+				descmd := strings.Fields(action)
+				bin, err := exec.LookPath(descmd[0])
+				if err != nil {
+					log.Println(err)
+				}
+				cmd := exec.Command(bin, descmd[1:]...)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					log.Fatalf("cmd.Run() failed with %s\n", err)
+				}
+				sendReturn(channel, string(out))
+			}
 		}
 	}
 	bof := backoff.NewExponentialBackOff()
 	err = backoff.Retry(operation, bof)
 	return err
+}
+
+//TODO: put this behind a chan to control flow
+func sendReturn(channel ssh.Channel, message string) {
+	gob.Register(datums.ClientStatus{})
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	status := datums.ClientStatus{Name: clientHost, Message: message}
+	err := enc.Encode(&status)
+	if err != nil {
+		log.Println(err)
+	}
+	channel.Write(buf.Bytes())
+}
+
+func sendStatus(channel ssh.Channel) {
+	gob.Register(datums.ClientStatus{})
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	ticker := time.NewTicker(2 * time.Second)
+	for t := range ticker.C {
+		log.Println(t)
+		status := datums.ClientStatus{
+			Name:    clientHost,
+			Message: "placeholder",
+		}
+		err := enc.Encode(&status)
+		if err != nil {
+			log.Println(err)
+		}
+		channel.Write(buf.Bytes())
+		buf.Reset()
+	}
 }
