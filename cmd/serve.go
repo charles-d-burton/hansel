@@ -47,6 +47,18 @@ var (
 	maxFile  = (1024 * 1024)
 )
 
+//RemoteHost represents a Host Object with send and receive channels
+type Client struct {
+	sync.RWMutex
+	Name     string
+	IP       net.Addr
+	KeySha   string
+	Channel  ssh.Channel
+	Controls struct {
+		Timer int
+	}
+}
+
 type ConfigFileLocker struct {
 	AuthorizedUsers struct {
 		sync.RWMutex
@@ -118,6 +130,9 @@ func listenAndServe(privateKeyFile string) {
 			continue
 		}
 		log.Printf("New SSH connection from %s (%s)", sshConn.RemoteAddr(), sshConn.ClientVersion())
+		client := &Client{
+			IP: sshConn.RemoteAddr(),
+		}
 		go ssh.DiscardRequests(reqs)
 		go handleChannels(chans)
 	}
@@ -143,7 +158,6 @@ func handleChannel(newChannel ssh.NewChannel) {
 	go readFromRemote(channel)
 	//requests must be serviced
 	go ssh.DiscardRequests(requests)
-	gob.Register(datums.Message{})
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	home, err := homedir.Dir()
@@ -208,18 +222,20 @@ func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 }
 
 func readFromRemote(channel ssh.Channel) {
-	var clientStatus datums.ClientStatus
+	var clientMessage datums.ClientMessage
 	log.Println("Reading channel")
-	gob.Register(datums.ClientStatus{})
 	dec := gob.NewDecoder(channel)
 	for {
-		err := dec.Decode(&clientStatus)
+		err := dec.Decode(&clientMessage)
 		if err != nil {
 			log.Println("Failed reading from channel", err)
 			//return
 		}
-		log.Println("Received status from: ", clientStatus.Name)
-		log.Println(clientStatus.Message)
+		log.Println("Received status from: ", clientMessage.GetClientInfo().Name)
+		for _, result := range clientMessage.GetResults() {
+			log.Println(result)
+		}
+
 	}
 }
 
@@ -295,7 +311,7 @@ func validateConfigFileExists(filePath string) error {
 	return nil
 }
 
-func marshalConfigs(configDir string) ([]*datums.Message, error) {
+func marshalConfigs(configDir string) ([]*datums.CommandRunner, error) {
 	d, err := os.Open(configDir)
 	if err != nil {
 		return nil, err
@@ -304,7 +320,7 @@ func marshalConfigs(configDir string) ([]*datums.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	var messages []*datums.Message
+	var messages []*datums.CommandRunner
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +339,7 @@ func marshalConfigs(configDir string) ([]*datums.Message, error) {
 					log.Println(err)
 					continue
 				}
-				var message datums.Message
+				var message datums.CommandRunner
 				err = yaml.Unmarshal(buffer, &message)
 				if err != nil {
 					log.Println(err)

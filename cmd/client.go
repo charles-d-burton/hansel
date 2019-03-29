@@ -23,8 +23,7 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -36,6 +35,15 @@ var (
 	clientHost string
 	clientPort string
 )
+
+type Server struct {
+	sync.RWMutex
+	Host      *string
+	Port      *string
+	Closed    bool
+	SSHConfig *ssh.ClientConfig
+	Channel   ssh.Channel
+}
 
 // clientCmd represents the client command
 var clientCmd = &cobra.Command{
@@ -92,10 +100,21 @@ func connect(privateKey string) error {
 		},
 		Timeout: time.Second * 30,
 	}
+	//Setup the Server
+	server := &Server{
+		Host:      &clientHost,
+		Port:      &clientPort,
+		SSHConfig: sshConfig,
+	}
+	server.Connect()
+	return err
+}
 
+func (server *Server) Connect() {
 	operation := func() error {
 		log.Println("Attempting to connect")
-		client, err := ssh.Dial("tcp", clientHost+":"+clientPort, sshConfig)
+
+		client, err := ssh.Dial("tcp", *server.Host+":"+*server.Port, server.SSHConfig)
 		if err != nil {
 			log.Println(err)
 			return err
@@ -104,54 +123,66 @@ func connect(privateKey string) error {
 		if err != nil {
 			return err
 		}
-		//go sendStatus(channel)
-		log.Println("Reading channel")
-		gob.Register(datums.Message{})
-		var message datums.Message
-		dec := gob.NewDecoder(channel)
-		for {
-			err := dec.Decode(&message)
-			if err != nil {
-				return err
-			}
-			log.Println(&message)
-			for _, action := range message.Actions {
-				log.Println("Running:")
-				log.Println(action)
-				descmd := strings.Fields(action)
-				bin, err := exec.LookPath(descmd[0])
-				if err != nil {
-					log.Println(err)
-				}
-				cmd := exec.Command(bin, descmd[1:]...)
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					log.Fatalf("cmd.Run() failed with %s\n", err)
-				}
-				sendReturn(channel, string(out))
-			}
+		server.Channel = channel
+		server.Closed = false
+		err = server.ProcessReqs()
+		if err != nil {
+			return err
 		}
+		return nil
 	}
 	bof := backoff.NewExponentialBackOff()
-	err = backoff.Retry(operation, bof)
-	return err
+	err := backoff.Retry(operation, bof)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-//TODO: put this behind a chan to control flow
-func sendReturn(channel ssh.Channel, message string) {
-	gob.Register(datums.ClientStatus{})
+//ProcessReqs TODO: Ensure this works like I think it does.  I believe this should just run forever and attempt reconnect on failures
+func (server *Server) ProcessReqs() error {
+	go server.sendStatus()
+	log.Println("Reading channel")
+	var message datums.ServerMessage
+	dec := gob.NewDecoder(server.Channel)
+	for {
+		err := dec.Decode(&message)
+		if err != nil {
+			server.Closed = true
+			server.Channel.Close()
+			return err
+		}
+		log.Println(&message)
+		result, err := message.Execute()
+		if err != nil {
+			server.Closed = true
+			server.Channel.Close()
+			return err
+		}
+		server.sendReturn(result)
+	}
+}
+
+//Send a message back to the server
+func (server *Server) sendReturn(message []string) error {
+	server.Lock()
+	defer server.Unlock()
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	status := datums.ClientStatus{Name: clientHost, Message: message}
+	status := datums.ClientResult{Name: clientHost, Results: message}
 	err := enc.Encode(&status)
 	if err != nil {
-		log.Println(err)
+		return err
 	}
-	channel.Write(buf.Bytes())
+	_, err = server.Channel.Write(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func sendStatus(channel ssh.Channel) {
-	gob.Register(datums.ClientStatus{})
+//TODO: Update the ClientStatus with a lot more system info
+func (server *Server) sendStatus() {
+	defer server.Unlock()
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	ticker := time.NewTicker(2 * time.Second)
@@ -159,13 +190,23 @@ func sendStatus(channel ssh.Channel) {
 		log.Println(t)
 		status := datums.ClientStatus{
 			Name:    clientHost,
-			Message: "placeholder",
+			Message: "keepalive",
 		}
 		err := enc.Encode(&status)
 		if err != nil {
 			log.Println(err)
+			continue
 		}
-		channel.Write(buf.Bytes())
-		buf.Reset()
+		if !server.Closed {
+			server.Lock()
+			_, err = server.Channel.Write(buf.Bytes())
+			server.Unlock()
+			if err != nil {
+				return
+			}
+			buf.Reset()
+			continue
+		}
+		return
 	}
 }

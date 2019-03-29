@@ -1,13 +1,16 @@
 package datums
 
-type Message struct {
-	Sequence int      `yaml:"sequence"`
-	Type     string   `yaml:"type"`
-	Actions  []string `yaml:"actions"`
-	Targets  []string `yaml:"targets"`
+type ServerMessage interface {
+	GetSequence() int
+	GetType() string
+	Execute() ([]string, error)
 }
 
-type ClientStatus struct {
-	Name    string
-	Message string
+type ClientMessage interface {
+	GetClientInfo() HostInfo
+	GetResults() []string
+}
+
+type HostInfo struct {
+	Name string
 }
