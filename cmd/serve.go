@@ -184,6 +184,7 @@ func handleChannel(newChannel ssh.NewChannel) {
 	select {}
 }
 
+//Validate that the provided user and key are valid
 func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	valid, err := isUserValid(connMeta.User(), ssh.FingerprintSHA256(key))
 	if err != nil {
@@ -199,6 +200,7 @@ func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissi
 	return nil, errors.New("User is not valid")
 }
 
+//Setup the configs
 func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 	var cfFlocker ConfigFileLocker
 	home, err := homedir.Dir()
@@ -222,6 +224,7 @@ func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 	return &cfFlocker, nil
 }
 
+//Read data returned from the client
 func readFromRemote(channel ssh.Channel) {
 	var clientMessage datums.ClientMessage
 	log.Println("Reading channel")
@@ -240,6 +243,7 @@ func readFromRemote(channel ssh.Channel) {
 	}
 }
 
+//Check if a user is in the authorized keys file
 func isUserValid(user, sha string) (bool, error) {
 	CFLocker.AuthorizedUsers.Lock()
 	defer CFLocker.AuthorizedUsers.Unlock()
@@ -252,6 +256,7 @@ func isUserValid(user, sha string) (bool, error) {
 	return lookForUser(file, user, sha)
 }
 
+//Create a new user and mark it as pending TODO: move with user management and also increase uniqueness(client side?)
 func markUserPending(user, sha string) error {
 	CFLocker.PendingUsers.Lock()
 	defer CFLocker.PendingUsers.Unlock()
@@ -273,6 +278,7 @@ func markUserPending(user, sha string) error {
 	return nil
 }
 
+//Search the provided file for a user TODO: User management should be a separate package
 func lookForUser(file *os.File, user, sha string) (bool, error) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -293,6 +299,7 @@ func lookForUser(file *os.File, user, sha string) (bool, error) {
 	return false, nil
 }
 
+//Validate that a config exists in the requested directory
 func validateConfigFileExists(filePath string) error {
 
 	if _, err := os.Stat(filePath); err == nil {
@@ -312,6 +319,7 @@ func validateConfigFileExists(filePath string) error {
 	return nil
 }
 
+//Marshal the config files from the config directory TODO: Move this somewhere
 func marshalConfigs(configDir string) ([]*datums.CommandRunner, error) {
 	d, err := os.Open(configDir)
 	if err != nil {
