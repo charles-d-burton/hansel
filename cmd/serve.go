@@ -20,8 +20,6 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"hansel/datums"
-	"hansel/keys"
 	"log"
 	"net"
 	"os"
@@ -29,6 +27,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/charles-d-burton/hansel/datums"
+	"github.com/charles-d-burton/hansel/keys"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
@@ -133,6 +133,7 @@ func listenAndServe(privateKeyFile string) {
 		client := &Client{
 			IP: sshConn.RemoteAddr(),
 		}
+		log.Println(client)
 		go ssh.DiscardRequests(reqs)
 		go handleChannels(chans)
 	}

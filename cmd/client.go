@@ -18,8 +18,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"hansel/datums"
-	"hansel/keys"
+
 	"log"
 	"net"
 	"os"
@@ -27,6 +26,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
+	"github.com/charles-d-burton/hansel/datums"
+	"github.com/charles-d-burton/hansel/keys"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
 )

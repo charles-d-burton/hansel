@@ -14,7 +14,7 @@
 
 package main
 
-import "hansel/cmd"
+import "github.com/charles-d-burton/hansel/cmd"
 
 func main() {
 	cmd.Execute()
