@@ -45,6 +45,7 @@ var (
 	Port     string
 	CFLocker *ConfigFileLocker
 	maxFile  = (1024 * 1024)
+	clients  = make([]*Client, 100)
 )
 
 //RemoteHost represents a Host Object with send and receive channels
@@ -146,8 +147,11 @@ func handleChannels(chans <-chan ssh.NewChannel) {
 }
 
 func handleChannel(newChannel ssh.NewChannel) {
+	var client Client
+	client.Lock()
+	defer client.Close()
+
 	channel, requests, err := newChannel.Accept()
-	defer channel.Close()
 	if err != nil {
 		log.Printf("could not accept channel (%s)", err)
 		return
@@ -156,6 +160,8 @@ func handleChannel(newChannel ssh.NewChannel) {
 	extraData := newChannel.ExtraData()
 
 	log.Printf("open channel [%s] '%s'", chanType, extraData)
+	client.Channel = channel
+	clients = append(clients, &client)
 	go readFromRemote(channel)
 	//requests must be serviced
 	go ssh.DiscardRequests(requests)
@@ -359,4 +365,9 @@ func marshalConfigs(configDir string) ([]*datums.CommandRunner, error) {
 		}
 	}
 	return messages, nil
+}
+
+//Close client connection
+func (client *Client) Close() {
+	client.Channel.Close()
 }
