@@ -58,6 +58,8 @@ type Client struct {
 	Controls struct {
 		Timer int
 	}
+	Stop    chan bool
+	Publish chan datums.ServerMessage
 }
 
 type ConfigFileLocker struct {
@@ -150,6 +152,7 @@ func handleChannel(newChannel ssh.NewChannel) {
 	var client Client
 	client.Lock()
 	defer client.Close()
+	defer client.Unlock()
 
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
@@ -160,13 +163,33 @@ func handleChannel(newChannel ssh.NewChannel) {
 	extraData := newChannel.ExtraData()
 
 	log.Printf("open channel [%s] '%s'", chanType, extraData)
+	//Setup the client
 	client.Channel = channel
 	clients = append(clients, &client)
+	client.Stop = make(chan bool, 1)
+	client.Publish = make(chan datums.ServerMessage, 100)
+	client.Unlock()
+
 	go readFromRemote(channel)
 	//requests must be serviced
 	go ssh.DiscardRequests(requests)
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
+	//watch for messages or a stop
+	select {
+	case message := <-client.Publish:
+		log.Println("Got message to publish: ", message)
+		err := enc.Encode(&message)
+		if err != nil {
+			log.Println(err)
+		}
+		channel.Write(buf.Bytes())
+		buf.Reset()
+	case <-client.Stop:
+		return
+	}
+
+	//TODO: Move out to the command queue function when I create it
 	home, err := homedir.Dir()
 	if err != nil {
 		log.Println(err)
@@ -230,6 +253,7 @@ func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 	return &cfFlocker, nil
 }
 
+//TODO: implement some kind of EOM marker and publish the message to a queue that prints them in sequence with client info
 //Read data returned from the client
 func readFromRemote(channel ssh.Channel) {
 	var clientMessage datums.ClientMessage
