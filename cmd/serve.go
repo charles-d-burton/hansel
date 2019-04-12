@@ -58,8 +58,8 @@ type Client struct {
 	Controls struct {
 		Timer int
 	}
-	Stop    chan bool
-	Publish chan datums.ServerMessage
+	Stop chan bool
+	Send chan datums.ServerMessage
 }
 
 type ConfigFileLocker struct {
@@ -167,7 +167,7 @@ func handleChannel(newChannel ssh.NewChannel) {
 	client.Channel = channel
 	clients = append(clients, &client)
 	client.Stop = make(chan bool, 1)
-	client.Publish = make(chan datums.ServerMessage, 100)
+	client.Send = make(chan datums.ServerMessage, 100)
 	client.Unlock()
 
 	go readFromRemote(channel)
@@ -177,13 +177,17 @@ func handleChannel(newChannel ssh.NewChannel) {
 	enc := gob.NewEncoder(&buf)
 	//watch for messages or a stop
 	select {
-	case message := <-client.Publish:
+	case message := <-client.Send:
 		log.Println("Got message to publish: ", message)
 		err := enc.Encode(&message)
 		if err != nil {
 			log.Println(err)
 		}
-		channel.Write(buf.Bytes())
+		_, err = channel.Write(buf.Bytes())
+		if err != nil {
+			log.Println(err)
+			return
+		}
 		buf.Reset()
 	case <-client.Stop:
 		return
