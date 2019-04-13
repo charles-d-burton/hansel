@@ -29,16 +29,15 @@ import (
 
 	"github.com/charles-d-burton/hansel/datums"
 	"github.com/charles-d-burton/hansel/keys"
-	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	ssh "golang.org/x/crypto/ssh"
 	yaml "gopkg.in/yaml.v2"
 )
 
 const (
-	authorizedFile = "/.hansel/authorized_users"
-	pendingFile    = "/.hansel/pending_users"
-	configDir      = "/.hansel/states/"
+	authorizedFile = "/etc/hansel/authorized_users"
+	pendingFile    = "/etc/hansel/pending_users"
+	configDir      = "/var/lib/hansel/"
 )
 
 var (
@@ -80,19 +79,19 @@ var serveCmd = &cobra.Command{
 	Long:  `Serve the SSH system to listen for incoming connections`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("serve called")
+		cfgFiles, err := setupConfigFiles(authorizedFile, pendingFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if cfgFiles == nil {
+			log.Fatal(errors.New("Unable to initialize config files"))
+		}
+		CFLocker = cfgFiles
 		listenAndServe(privateKey)
 	},
 }
 
 func init() {
-	cfgFiles, err := setupConfigFiles(authorizedFile, pendingFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if cfgFiles == nil {
-		log.Fatal(errors.New("Unable to initialize config files"))
-	}
-	CFLocker = cfgFiles
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().StringVarP(&Port, "port", "p", "62621", "Set the port to listen for connections")
 	// Here you will define your flags and configuration settings.
@@ -193,13 +192,7 @@ func handleChannel(newChannel ssh.NewChannel) {
 		return
 	}
 
-	//TODO: Move out to the command queue function when I create it
-	home, err := homedir.Dir()
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	configs, err := marshalConfigs(home + configDir)
+	configs, err := marshalConfigs(configDir)
 	if err != nil {
 		log.Println(err)
 		return
@@ -214,7 +207,6 @@ func handleChannel(newChannel ssh.NewChannel) {
 		channel.Write(buf.Bytes())
 		buf.Reset()
 	}
-	select {}
 }
 
 //Validate that the provided user and key are valid
@@ -236,14 +228,8 @@ func validatePubKey(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissi
 //Setup the configs
 func setupConfigFiles(configs ...string) (*ConfigFileLocker, error) {
 	var cfFlocker ConfigFileLocker
-	home, err := homedir.Dir()
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
 	for _, configFile := range configs {
-		cfgFile := home + configFile
-		err = validateConfigFileExists(cfgFile)
+		err := validateConfigFileExists(configFile)
 		if err != nil {
 			return nil, err
 		}

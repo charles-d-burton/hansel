@@ -20,7 +20,6 @@ import (
 	"os"
 
 	"github.com/charles-d-burton/hansel/keys"
-	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -50,6 +49,21 @@ to quickly create a Cobra application.`,
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	if _, err := os.Stat("/etc/hansel"); os.IsNotExist(err) {
+		os.Mkdir("/etc/hansel", os.FileMode(0700))
+	}
+	if _, err := os.Stat("/var/lib/hansel"); os.IsNotExist(err) {
+		os.Mkdir("/var/lib/hansel", os.FileMode(0700))
+	}
+	privateKey = "/etc/hansel/id_rsa"
+	publicKey = "/etc/hansel/id_rsa.pub"
+	log.Println(privateKey)
+	log.Println(publicKey)
+	err := keys.MakeSSHKeyPair(publicKey, privateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -57,23 +71,6 @@ func Execute() {
 }
 
 func init() {
-	// Find home directory.
-	home, err := homedir.Dir()
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	if _, err := os.Stat(home + "/.hansel"); os.IsNotExist(err) {
-		os.Mkdir(home+"/.hansel", os.FileMode(0700))
-	}
-	privateKey = home + "/.hansel/id_rsa"
-	publicKey = home + "/.hansel/id_rsa.pub"
-	log.Println(privateKey)
-	log.Println(publicKey)
-	err = keys.MakeSSHKeyPair(publicKey, privateKey)
-	if err != nil {
-		log.Fatal(err)
-	}
 	cobra.OnInitialize(initConfig)
 
 	// Here you will define your flags and configuration settings.
@@ -88,14 +85,6 @@ func init() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
-	/*if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Search config in home directory with name ".hansel" (without extension).
-		viper.AddConfigPath(home)
-		viper.SetConfigName(".hansel/config")
-	}*/
 
 	viper.AutomaticEnv() // read in environment variables that match
 

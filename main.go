@@ -14,8 +14,24 @@
 
 package main
 
-import "github.com/charles-d-burton/hansel/cmd"
+import (
+	"log"
+	"os"
+	"os/user"
+
+	"github.com/charles-d-burton/hansel/cmd"
+	"github.com/fatih/color"
+)
 
 func main() {
+	user, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if user.Uid != "0" {
+		color.Red("You must run as root.")
+		os.Exit(0)
+	}
 	cmd.Execute()
 }
