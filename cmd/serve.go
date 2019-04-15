@@ -35,9 +35,10 @@ import (
 )
 
 const (
-	authorizedFile = "/etc/hansel/authorized_users"
-	pendingFile    = "/etc/hansel/pending_users"
-	configDir      = "/var/lib/hansel/"
+	authorizedFile   = "/etc/hansel/authorized_users"
+	pendingFile      = "/etc/hansel/pending_users"
+	configDir        = "/var/lib/hansel/"
+	domainSocketAddr = "/var/lib/hansel/hansel.sock"
 )
 
 var (
@@ -59,6 +60,11 @@ type Client struct {
 	}
 	Stop chan bool
 	Send chan datums.ServerMessage
+}
+
+type DomainListener struct {
+	Conn    net.Conn
+	Returns chan string
 }
 
 type ConfigFileLocker struct {
@@ -87,7 +93,8 @@ var serveCmd = &cobra.Command{
 			log.Fatal(errors.New("Unable to initialize config files"))
 		}
 		CFLocker = cfgFiles
-		listenAndServe(privateKey)
+		go listenAndServeDomain()
+		listenAndServeSSH(privateKey)
 	},
 }
 
@@ -105,7 +112,58 @@ func init() {
 	// serveCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-func listenAndServe(privateKeyFile string) {
+func listenAndServeDomain() {
+	listner, err := net.Listen("unix", domainSocketAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		conn, err := listner.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		var dl DomainListener
+		dl.Conn = conn
+		dl.Returns = make(chan string, 100)
+		err = dl.ReadCommandStream()
+		go dl.ProcessReturns()
+		if err != nil {
+			log.Println(err)
+		}
+	}
+}
+
+//ReadCommandStream Listen for incoming commands to farm out to clients
+func (dl *DomainListener) ReadCommandStream() error {
+	for {
+		var message datums.ControlMessage
+		log.Println("Reading Control Stream")
+		dec := gob.NewDecoder(dl.Conn)
+		for {
+			err := dec.Decode(&message)
+			if err != nil {
+				log.Println("Failed reading from control stream", err)
+				//return
+			}
+			for _, host := range message.Hosts {
+				log.Println("Sending command to host: ", host)
+			}
+		}
+	}
+}
+
+//Process incoming return messages and relay back to caller
+func (dl *DomainListener) ProcessReturns() error {
+	for ret := range dl.Returns {
+		_, err := dl.Conn.Write([]byte(ret))
+		if err != nil {
+			log.Println(err)
+		}
+	}
+	return nil
+}
+
+func listenAndServeSSH(privateKeyFile string) {
 	signer, err := keys.PrivateKeySigner(privateKeyFile)
 	if err != nil {
 		log.Println(err)
