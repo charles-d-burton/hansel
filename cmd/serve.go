@@ -23,9 +23,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/charles-d-burton/hansel/datums"
 	"github.com/charles-d-burton/hansel/keys"
@@ -113,12 +115,19 @@ func init() {
 }
 
 func listenAndServeDomain() {
-	listner, err := net.Listen("unix", domainSocketAddr)
+
+	listener, err := net.Listen("unix", domainSocketAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
+	go func() {
+		<-handleSigIntKill()
+		log.Println("Received application termination")
+		listener.Close()
+		os.Exit(0)
+	}()
 	for {
-		conn, err := listner.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -442,4 +451,10 @@ func marshalConfigs(configDir string) ([]*datums.CommandRunner, error) {
 //Close client connection
 func (client *Client) Close() {
 	client.Channel.Close()
+}
+
+func handleSigIntKill() chan os.Signal {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	return sig
 }
