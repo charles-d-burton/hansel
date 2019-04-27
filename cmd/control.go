@@ -15,30 +15,37 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"net"
-	"sync"
+	"regexp"
 
+	"github.com/charles-d-burton/hansel/datums"
 	"github.com/spf13/cobra"
 )
 
-type Controller struct {
-	sync.RWMutex
-	Listener net.Listener
-}
+var (
+	hostPattern string
+)
 
 // controllerCmd represents the controller command
-var controllerCmd = &cobra.Command{
-	Use:   "controller",
+var controlCmd = &cobra.Command{
+	Use:   "control",
 	Short: "Control machines or the runner",
 	Long:  `Used to issue commands against remotes or schedule commands`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("controller called")
+		err := doControl()
+		if err != nil {
+			fmt.Println(err)
+		}
+
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(controllerCmd)
+	rootCmd.AddCommand(controlCmd)
 	// Here you will define your flags and configuration settings.
 
 	// Cobra supports Persistent Flags which will work for this command
@@ -47,5 +54,28 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// controllerCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	controlCmd.Flags().StringVarP(&hostPattern, "hosts", "h", "*", "PCRE host lookup")
+}
+
+func doControl() error {
+	var controller datums.Controller
+	if hostPattern != "" {
+		r, err := regexp.Compile(hostPattern)
+		if err != nil {
+			return err
+		}
+		controller.Regex = r
+	}
+	c, err := net.Dial("unix", domainSocketAddr)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	enc.Encode(controller)
+	_, err = c.Write(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	return nil
 }

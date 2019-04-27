@@ -1,8 +1,9 @@
 package datums
 
 type ClientResult struct {
-	Name    string
-	Results []string
+	Name       string
+	Results    []string
+	Controller ControllerResult
 }
 
 func (result *ClientResult) GetResult() []string {
