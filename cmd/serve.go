@@ -114,6 +114,7 @@ func init() {
 	// serveCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
+//Open the domain socket to listen for CLI commands.  Works on Linux/Unix maybe need TCP for Windows
 func listenAndServeDomain() {
 
 	listener, err := net.Listen("unix", domainSocketAddr)
