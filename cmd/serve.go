@@ -37,10 +37,11 @@ import (
 )
 
 const (
-	authorizedFile   = "/etc/hansel/authorized_users"
-	pendingFile      = "/etc/hansel/pending_users"
+	authorizedFile   = "/var/lib/authorized_users"
+	pendingFile      = "/var/lib/pending_users"
 	configDir        = "/var/lib/hansel/"
-	domainSocketAddr = "/var/lib/hansel/hansel.sock"
+	runDir           = "/var/run/hansel/"
+	domainSocketAddr = "/var/run/hansel/hansel.sock"
 )
 
 var (
@@ -64,11 +65,6 @@ type Client struct {
 	Send chan datums.ServerMessage
 }
 
-type DomainListener struct {
-	Conn    net.Conn
-	Returns chan string
-}
-
 type ConfigFileLocker struct {
 	AuthorizedUsers struct {
 		sync.RWMutex
@@ -87,6 +83,10 @@ var serveCmd = &cobra.Command{
 	Long:  `Serve the SSH system to listen for incoming connections`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("serve called")
+		err := setupKeys()
+		if err != nil {
+			log.Fatal(err)
+		}
 		cfgFiles, err := setupConfigFiles(authorizedFile, pendingFile)
 		if err != nil {
 			log.Fatal(err)
@@ -112,65 +112,6 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// serveCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-}
-
-//Open the domain socket to listen for CLI commands.  Works on Linux/Unix maybe need TCP for Windows
-func listenAndServeDomain() {
-
-	listener, err := net.Listen("unix", domainSocketAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	go func() {
-		<-handleSigIntKill()
-		log.Println("Received application termination")
-		listener.Close()
-		os.Exit(0)
-	}()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		var dl DomainListener
-		dl.Conn = conn
-		dl.Returns = make(chan string, 100)
-		err = dl.ReadCommandStream()
-		go dl.ProcessReturns()
-		if err != nil {
-			log.Println(err)
-		}
-	}
-}
-
-//ReadCommandStream Listen for incoming commands to farm out to clients
-func (dl *DomainListener) ReadCommandStream() error {
-	for {
-		var message datums.ControlMessage
-		log.Println("Reading Control Stream")
-		dec := gob.NewDecoder(dl.Conn)
-		for {
-			err := dec.Decode(&message)
-			if err != nil {
-				log.Println("Failed reading from control stream", err)
-				//return
-			}
-			for _, host := range message.Hosts {
-				log.Println("Sending command to host: ", host)
-			}
-		}
-	}
-}
-
-//Process incoming return messages and relay back to caller
-func (dl *DomainListener) ProcessReturns() error {
-	for ret := range dl.Returns {
-		_, err := dl.Conn.Write([]byte(ret))
-		if err != nil {
-			log.Println(err)
-		}
-	}
-	return nil
 }
 
 func listenAndServeSSH(privateKeyFile string) {

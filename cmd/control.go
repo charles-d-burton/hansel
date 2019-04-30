@@ -18,8 +18,8 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"log"
 	"net"
-	"regexp"
 
 	"github.com/charles-d-burton/hansel/datums"
 	"github.com/spf13/cobra"
@@ -54,17 +54,14 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	controlCmd.Flags().StringVarP(&hostPattern, "hosts", "h", "*", "PCRE host lookup")
+	controlCmd.Flags().StringVarP(&hostPattern, "hosts", "h", ".*", "PCRE host lookup (required)")
+	controlCmd.MarkFlagRequired("hosts")
 }
 
 func doControl() error {
-	var controller datums.Controller
+	var controller datums.ControllerReq
 	if hostPattern != "" {
-		r, err := regexp.Compile(hostPattern)
-		if err != nil {
-			return err
-		}
-		controller.Regex = r
+		controller.Pattern = hostPattern
 	}
 	c, err := net.Dial("unix", domainSocketAddr)
 	if err != nil {
@@ -72,10 +69,32 @@ func doControl() error {
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	enc.Encode(controller)
+	err = enc.Encode(controller)
+	if err != nil {
+		log.Println(err)
+	}
 	_, err = c.Write(buf.Bytes())
+	err = listenForResult(c)
+	c.Close()
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func listenForResult(c net.Conn) error {
+	log.Println("Reading Control Stream")
+	var message datums.ClientResult
+	for {
+		dec := gob.NewDecoder(c)
+		err := dec.Decode(&message)
+		if err != nil {
+			if err.Error() != "EOF" {
+				log.Println(err)
+				return err
+			}
+			return nil
+		}
+		fmt.Printf("%+v\n", message)
+	}
 }

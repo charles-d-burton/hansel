@@ -49,20 +49,6 @@ to quickly create a Cobra application.`,
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	if _, err := os.Stat("/etc/hansel"); os.IsNotExist(err) {
-		os.Mkdir("/etc/hansel", os.FileMode(0700))
-	}
-	if _, err := os.Stat("/var/lib/hansel"); os.IsNotExist(err) {
-		os.Mkdir("/var/lib/hansel", os.FileMode(0700))
-	}
-	privateKey = "/etc/hansel/id_rsa"
-	publicKey = "/etc/hansel/id_rsa.pub"
-	log.Println(privateKey)
-	log.Println(publicKey)
-	err := keys.MakeSSHKeyPair(publicKey, privateKey)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -92,4 +78,25 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
 	}
+}
+
+func setupKeys() error {
+	if _, err := os.Stat("/etc/hansel"); os.IsNotExist(err) {
+		os.Mkdir("/etc/hansel", os.FileMode(0700))
+	}
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		os.Mkdir(configDir, os.FileMode(0700))
+	}
+	if _, err := os.Stat(runDir); os.IsNotExist(err) {
+		os.Mkdir(runDir, os.FileMode(0700))
+	}
+	privateKey = "/etc/hansel/id_rsa"
+	publicKey = "/etc/hansel/id_rsa.pub"
+	log.Println(privateKey)
+	log.Println(publicKey)
+	err := keys.MakeSSHKeyPair(publicKey, privateKey)
+	if err != nil {
+		return err
+	}
+	return nil
 }
